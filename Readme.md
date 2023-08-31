@@ -2,7 +2,7 @@
 
 A custom fork of [@nestjs/common Console Logger](https://github.com/nestjs/nest/blob/master/packages/common/services/console-logger.service.ts), but with colored contexts. Inspired by [debug](https://www.npmjs.com/package/debug).
 
-![Screenshot](./Screenshot.png?raw=true)
+![Screenshot](https://raw.githubusercontent.com/chriswoodle/nestjs-color-logger/master/Screenshot.png?raw=true)
 
 # Installation
 ```shell
