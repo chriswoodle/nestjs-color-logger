@@ -1,0 +1,6 @@
+.yarn*
+.vscode
+tsconfig*
+.pnp*
+src/*
+Screenshot.png
