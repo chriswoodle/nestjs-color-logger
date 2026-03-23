@@ -5,11 +5,12 @@
 
 # Yarn
 .yarn/*
-!.yarn/releases
 !.yarn/plugins
-!.yarn/sdks
 !.yarn/versions
 .pnp.*
+
+# Package files
+*.tgz
 
 # Dependency directory
 node_modules

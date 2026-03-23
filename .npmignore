@@ -4,3 +4,4 @@ tsconfig*
 .pnp*
 src/*
 Screenshot.png
+bump-please-config.json

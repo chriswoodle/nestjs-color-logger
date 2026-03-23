@@ -1,6 +1,6 @@
 {
     "name": "nestjs-color-logger",
-    "packageManager": "yarn@3.6.3",
+    "packageManager": "yarn@4.13.0",
     "version": "1.0.0",
     "description": "A color logger for NestJS 🌈",
     "license": "MIT",
@@ -12,17 +12,19 @@
     },
     "scripts": {
         "build": "tsc -b -v",
-        "clean": "tsc -b --clean"
+        "clean": "tsc -b --clean",
+        "ci": "yarn build"
     },
     "dependencies": {
-        "@nestjs/common": "^10.2.3"
+        "@nestjs/common": "^11.1.17"
     },
     "devDependencies": {
-        "rxjs": "^7.8.1",
-        "typescript": "^4.0.0"
+        "@types/node": "^25.5.0",
+        "rxjs": "^7.8.2",
+        "typescript": "^5.9.3"
     },
     "peerDependencies": {
-        "@nestjs/common": "^10.2.3",
-        "rxjs": "^7.8.1"
+        "@nestjs/common": "^11.1.17",
+        "rxjs": "^7.8.2"
     }
 }
