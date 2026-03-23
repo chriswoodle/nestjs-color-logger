@@ -347,7 +347,7 @@ export class ColorLogger implements LoggerService {
             }
             const pidMessage = this.formatPid(process.pid);
             const contextMessage = this.formatContext(context);
-            const timestampDiff = this.updateAndGetTimestampDiff();
+            const timestampDiff = this.updateAndGetTimestampDiff(context);
             const formattedLogLevel = logLevel.toUpperCase().padStart(7, ' ');
             const formattedMessage = this.formatMessage(
                 logLevel,
@@ -508,19 +508,19 @@ export class ColorLogger implements LoggerService {
         }
     }
 
-    protected updateAndGetTimestampDiff(): string {
+    protected updateAndGetTimestampDiff(context = ''): string {
         const includeTimestamp =
             ColorLogger.lastTimestampAt && this.options?.timestamp;
         const result = includeTimestamp
-            ? this.formatTimestampDiff(Date.now() - ColorLogger.lastTimestampAt!)
+            ? this.formatTimestampDiff(context, Date.now() - ColorLogger.lastTimestampAt!)
             : '';
         ColorLogger.lastTimestampAt = Date.now();
         return result;
     }
 
-    protected formatTimestampDiff(timestampDiff: number) {
+    protected formatTimestampDiff(context: string, timestampDiff: number) {
         const formattedDiff = ` +${timestampDiff}ms`;
-        return this.options.colors ? clc.yellow(formattedDiff) : formattedDiff;
+        return this.colorText(context, formattedDiff);
     }
 
     protected getInspectOptions(): InspectOptions {
