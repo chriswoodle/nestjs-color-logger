@@ -24,6 +24,7 @@ export const clc = {
     red: colorIfAllowed((text: string) => `\x1B[31m${text}\x1B[39m`),
     magentaBright: colorIfAllowed((text: string) => `\x1B[95m${text}\x1B[39m`),
     cyanBright: colorIfAllowed((text: string) => `\x1B[96m${text}\x1B[39m`),
+    white: colorIfAllowed((text: string) => `\x1B[37m${text}\x1B[39m`),
 };
 
 export interface ColorLoggerOptions {
@@ -467,7 +468,7 @@ export class ColorLogger implements LoggerService {
         }
 
         if (typeof message === 'string') {
-            return this.colorize(message, logLevel);
+            return this.colorizeMessage(message, logLevel);
         }
 
         const outputText = inspect(message, this.inspectOptions);
@@ -485,6 +486,14 @@ export class ColorLogger implements LoggerService {
             return message;
         }
         const color = this.getColorByLogLevel(logLevel);
+        return color(message);
+    }
+
+    protected colorizeMessage(message: string, logLevel: LogLevel) {
+        if (!this.options.colors || this.options.json) {
+            return message;
+        }
+        const color = this.getMessageColorByLogLevel(logLevel);
         return color(message);
     }
 
@@ -628,6 +637,23 @@ export class ColorLogger implements LoggerService {
                 return clc.bold;
             default:
                 return clc.green;
+        }
+    }
+
+    private getMessageColorByLogLevel(level: LogLevel) {
+        switch (level) {
+            case 'log':
+            case 'verbose':
+            case 'debug':
+                return clc.white;
+            case 'warn':
+                return clc.yellow;
+            case 'error':
+                return clc.red;
+            case 'fatal':
+                return clc.bold;
+            default:
+                return clc.white;
         }
     }
 
