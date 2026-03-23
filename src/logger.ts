@@ -1,5 +1,8 @@
+import { inspect, InspectOptions } from 'util';
 import { LoggerService, Optional, LogLevel } from '@nestjs/common';
 import { isPlainObject } from './utils';
+
+const DEFAULT_DEPTH = 5;
 
 const colors = [
     20, 21, 26, 27, 32, 33, 38, 39, 40, 41, 42, 43, 44, 45, 56, 57, 62, 63, 68, 69, 74, 75, 76, 77, 78,
@@ -22,6 +25,7 @@ export const clc = {
     magentaBright: colorIfAllowed((text: string) => `\x1B[95m${text}\x1B[39m`),
     cyanBright: colorIfAllowed((text: string) => `\x1B[96m${text}\x1B[39m`),
 };
+
 export interface ColorLoggerOptions {
     /**
      * Enabled log levels.
@@ -29,8 +33,73 @@ export interface ColorLoggerOptions {
     logLevels?: LogLevel[];
     /**
      * If enabled, will print timestamp (time difference) between current and previous log message.
+     * Note: This option is not used when `json` is enabled.
      */
-    disableTimestamp?: boolean;
+    timestamp?: boolean;
+    /**
+     * A prefix to be used for each log message.
+     * Note: This option is not used when `json` is enabled.
+     * @default 'Nest'
+     */
+    prefix?: string;
+    /**
+     * If enabled, will print the log message in JSON format.
+     */
+    json?: boolean;
+    /**
+     * If enabled, will print the log message in color.
+     * Default true if json is disabled, false otherwise.
+     */
+    colors?: boolean;
+    /**
+     * The context of the logger.
+     */
+    context?: string;
+    /**
+     * If enabled, will force the use of console.log/console.error instead of process.stdout/stderr.write.
+     * This is useful for test environments like Jest that can buffer console calls.
+     * @default false
+     */
+    forceConsole?: boolean;
+    /**
+     * If enabled, will print the log message in a single line, even if it is an object with multiple properties.
+     * If set to a number, the most n inner elements are united on a single line as long as all properties fit into breakLength.
+     * Default true when `json` is enabled, false otherwise.
+     */
+    compact?: boolean | number;
+    /**
+     * Specifies the maximum number of Array, TypedArray, Map, Set, WeakMap, and WeakSet elements to include when formatting.
+     * Set to null or Infinity to show all elements. Set to 0 or negative to show no elements.
+     * @default 100
+     */
+    maxArrayLength?: number;
+    /**
+     * Specifies the maximum number of characters to include when formatting.
+     * Set to null or Infinity to show all elements. Set to 0 or negative to show no characters.
+     * @default 10000
+     */
+    maxStringLength?: number;
+    /**
+     * If enabled, will sort keys while formatting objects.
+     * Can also be a custom sorting function.
+     * @default false
+     */
+    sorted?: boolean | ((a: string, b: string) => number);
+    /**
+     * Specifies the number of times to recurse while formatting object.
+     * @default 5
+     */
+    depth?: number;
+    /**
+     * If true, object's non-enumerable symbols and properties are included in the formatted result.
+     * @default false
+     */
+    showHidden?: boolean;
+    /**
+     * The length at which input values are split across multiple lines.
+     * Default Infinity when "compact" is true, 80 otherwise.
+     */
+    breakLength?: number;
 }
 
 const DEFAULT_LOG_LEVELS: LogLevel[] = [
@@ -84,22 +153,38 @@ export function isLogLevelEnabled(
 }
 
 export class ColorLogger implements LoggerService {
-    private static lastTimestampAt?: number;
-    private originalContext?: string;
+    protected options: ColorLoggerOptions;
+    protected context?: string;
+    protected originalContext?: string;
+    protected inspectOptions: InspectOptions;
+    protected static lastTimestampAt?: number;
 
     constructor();
     constructor(context: string);
+    constructor(options: ColorLoggerOptions);
     constructor(context: string, options: ColorLoggerOptions);
     constructor(
         @Optional()
-        protected context?: string,
+        contextOrOptions?: string | ColorLoggerOptions,
         @Optional()
-        protected options: ColorLoggerOptions = {},
+        options?: ColorLoggerOptions,
     ) {
-        if (!options.logLevels) {
-            options.logLevels = DEFAULT_LOG_LEVELS;
-        }
+        let [context, opts] = typeof contextOrOptions === 'string'
+            ? [contextOrOptions, options]
+            : options
+                ? [undefined, options]
+                : [contextOrOptions?.context, contextOrOptions];
+
+        opts = opts ?? {};
+        opts.logLevels ??= DEFAULT_LOG_LEVELS;
+        opts.colors ??= opts.json ? false : isColorAllowed();
+        opts.prefix ??= 'Nest';
+
+        this.options = opts;
+        this.inspectOptions = this.getInspectOptions();
+
         if (context) {
+            this.context = context;
             this.originalContext = context;
         }
     }
@@ -135,7 +220,7 @@ export class ColorLogger implements LoggerService {
         const { messages, context, stack } =
             this.getContextAndStackAndMessagesToPrint([message, ...optionalParams]);
 
-        this.printMessages(messages, context, 'error', 'stderr');
+        this.printMessages(messages, context, 'error', 'stderr', stack);
         this.printStackTrace(stack);
     }
 
@@ -247,11 +332,21 @@ export class ColorLogger implements LoggerService {
         context = '',
         logLevel: LogLevel = 'log',
         writeStreamType?: 'stdout' | 'stderr',
+        errorStack?: unknown,
     ) {
         messages.forEach(message => {
+            if (this.options.json) {
+                this.printAsJson(message, {
+                    context,
+                    logLevel,
+                    writeStreamType,
+                    errorStack,
+                });
+                return;
+            }
             const pidMessage = this.formatPid(process.pid);
             const contextMessage = this.formatContext(context);
-            const timestampDiff = this.updateAndGetTimestampDiff(context);
+            const timestampDiff = this.updateAndGetTimestampDiff();
             const formattedLogLevel = logLevel.toUpperCase().padStart(7, ' ');
             const formattedMessage = this.formatMessage(
                 logLevel,
@@ -262,16 +357,89 @@ export class ColorLogger implements LoggerService {
                 timestampDiff,
             );
 
-            process[writeStreamType ?? 'stdout'].write(formattedMessage);
+            if (this.options.forceConsole) {
+                if (writeStreamType === 'stderr') {
+                    console.error(formattedMessage.trim());
+                } else {
+                    console.log(formattedMessage.trim());
+                }
+            } else {
+                process[writeStreamType ?? 'stdout'].write(formattedMessage);
+            }
         });
     }
 
+    protected printAsJson(
+        message: unknown,
+        options: {
+            context: string;
+            logLevel: LogLevel;
+            writeStreamType?: 'stdout' | 'stderr';
+            errorStack?: unknown;
+        },
+    ) {
+        const logObject = this.getJsonLogObject(message, options);
+        const formattedMessage =
+            !this.options.colors && this.inspectOptions.compact === true
+                ? JSON.stringify(logObject, this.stringifyReplacer.bind(this))
+                : inspect(logObject, this.inspectOptions);
+        if (this.options.forceConsole) {
+            if (options.writeStreamType === 'stderr') {
+                console.error(formattedMessage);
+            } else {
+                console.log(formattedMessage);
+            }
+        } else {
+            process[options.writeStreamType ?? 'stdout'].write(
+                `${formattedMessage}\n`,
+            );
+        }
+    }
+
+    protected getJsonLogObject(
+        message: unknown,
+        options: {
+            context: string;
+            logLevel: LogLevel;
+            writeStreamType?: 'stdout' | 'stderr';
+            errorStack?: unknown;
+        },
+    ) {
+        type JsonLogObject = {
+            level: LogLevel;
+            pid: number;
+            timestamp: number;
+            message: unknown;
+            context?: string;
+            stack?: unknown;
+        };
+
+        const logObject: JsonLogObject = {
+            level: options.logLevel,
+            pid: process.pid,
+            timestamp: Date.now(),
+            message,
+        };
+
+        if (options.context) {
+            logObject.context = options.context;
+        }
+
+        if (options.errorStack) {
+            logObject.stack = options.errorStack;
+        }
+        return logObject;
+    }
+
     protected formatPid(pid: number) {
-        return `[Nest] ${pid}  - `;
+        return `[${this.options.prefix}] ${pid}  - `;
     }
 
     protected formatContext(context: string): string {
-        return context ? this.colorText(context, `[${context}] `) : '';
+        if (!context) {
+            return '';
+        }
+        return this.colorText(context, `[${context}] `);
     }
 
     protected formatMessage(
@@ -289,43 +457,110 @@ export class ColorLogger implements LoggerService {
     }
 
     protected stringifyMessage(message: unknown, logLevel: LogLevel): string {
-        // If the message is a function, call it and re-resolve its value.
-        return typeof message === 'function'
-            ? this.stringifyMessage(message(), logLevel)
-            : isPlainObject(message) || Array.isArray(message)
-                ? `${'Object:'}\n${JSON.stringify(
-                    message,
-                    (key, value) =>
-                        typeof value === 'bigint' ? value.toString() : value,
-                    2,
-                )}\n`
-                : message as string;
+        if (typeof message === 'function') {
+            const messageAsStr = Function.prototype.toString.call(message);
+            const isClass = messageAsStr.startsWith('class ');
+            if (isClass) {
+                return this.stringifyMessage(message.name, logLevel);
+            }
+            return this.stringifyMessage(message(), logLevel);
+        }
+
+        if (typeof message === 'string') {
+            return this.colorize(message, logLevel);
+        }
+
+        const outputText = inspect(message, this.inspectOptions);
+        if (isPlainObject(message)) {
+            return `Object(${Object.keys(message as object).length}) ${outputText}`;
+        }
+        if (Array.isArray(message)) {
+            return `Array(${message.length}) ${outputText}`;
+        }
+        return outputText;
     }
 
     protected colorize(message: string, logLevel: LogLevel) {
+        if (!this.options.colors || this.options.json) {
+            return message;
+        }
         const color = this.getColorByLogLevel(logLevel);
         return color(message);
     }
 
     protected printStackTrace(stack?: string) {
-        if (!stack) {
+        if (!stack || this.options.json) {
             return;
         }
-        process.stderr.write(`${stack}\n`);
+        if (this.options.forceConsole) {
+            console.error(stack);
+        } else {
+            process.stderr.write(`${stack}\n`);
+        }
     }
 
-    protected updateAndGetTimestampDiff(context: string): string {
-        const lastTimestampAt = ColorLogger.lastTimestampAt;
-        const includeTimestamp = lastTimestampAt && !this.options?.disableTimestamp;
+    protected updateAndGetTimestampDiff(): string {
+        const includeTimestamp =
+            ColorLogger.lastTimestampAt && this.options?.timestamp;
         const result = includeTimestamp
-            ? this.formatTimestampDiff(context, Date.now() - lastTimestampAt)
+            ? this.formatTimestampDiff(Date.now() - ColorLogger.lastTimestampAt!)
             : '';
         ColorLogger.lastTimestampAt = Date.now();
         return result;
     }
 
-    protected formatTimestampDiff(context: string, timestampDiff: number) {
-        return this.colorText(context, ` +${timestampDiff}ms`);
+    protected formatTimestampDiff(timestampDiff: number) {
+        const formattedDiff = ` +${timestampDiff}ms`;
+        return this.options.colors ? clc.yellow(formattedDiff) : formattedDiff;
+    }
+
+    protected getInspectOptions(): InspectOptions {
+        let breakLength = this.options.breakLength;
+        if (typeof breakLength === 'undefined') {
+            breakLength = this.options.colors
+                ? this.options.compact
+                    ? Infinity
+                    : undefined
+                : this.options.compact === false
+                    ? undefined
+                    : Infinity;
+        }
+
+        const inspectOptions: InspectOptions = {
+            depth: this.options.depth ?? DEFAULT_DEPTH,
+            sorted: this.options.sorted,
+            showHidden: this.options.showHidden,
+            compact: this.options.compact ?? (this.options.json ? true : false),
+            colors: this.options.colors,
+            breakLength,
+        };
+
+        if (typeof this.options.maxArrayLength !== 'undefined') {
+            inspectOptions.maxArrayLength = this.options.maxArrayLength;
+        }
+        if (typeof this.options.maxStringLength !== 'undefined') {
+            inspectOptions.maxStringLength = this.options.maxStringLength;
+        }
+
+        return inspectOptions;
+    }
+
+    protected stringifyReplacer(key: string, value: unknown) {
+        if (typeof value === 'bigint') {
+            return value.toString();
+        }
+        if (typeof value === 'symbol') {
+            return value.toString();
+        }
+
+        if (
+            value instanceof Map ||
+            value instanceof Set ||
+            value instanceof Error
+        ) {
+            return `${inspect(value, this.inspectOptions)}`;
+        }
+        return value;
     }
 
     private getContextAndMessagesToPrint(args: unknown[]) {
@@ -351,10 +586,7 @@ export class ColorLogger implements LoggerService {
                     stack: args[1] as string,
                     context: this.context,
                 }
-                : {
-                    messages: [args[0]],
-                    context: args[1] as string,
-                };
+                : { ...this.getContextAndMessagesToPrint(args) };
         }
 
         const { messages, context } = this.getContextAndMessagesToPrint(args);
@@ -375,11 +607,11 @@ export class ColorLogger implements LoggerService {
     }
 
     private isStackFormat(stack: unknown) {
-        if (typeof stack !== 'string' || stack == undefined) {
+        if (typeof stack !== 'string' && stack !== undefined) {
             return false;
         }
 
-        return /^(.)+\n\s+at .+:\d+:\d+$/.test(stack);
+        return /^(.)+\n\s+at .+:\d+:\d+/.test(stack!);
     }
 
     private getColorByLogLevel(level: LogLevel) {
@@ -400,8 +632,9 @@ export class ColorLogger implements LoggerService {
     }
 
     colorText(context: string, text: string) {
-        if (!isColorAllowed())
+        if (!this.options.colors) {
             return text;
+        }
 
         const c = this.selectColor(context);
         const colorCode = '\x1B[3' + (c < 8 ? c : '8;5;' + c) + 'm';

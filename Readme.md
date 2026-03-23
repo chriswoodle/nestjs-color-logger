@@ -45,5 +45,12 @@ export class HelloController {
 }
 ```
 
+# Development
+
+VSCode setup
+```
+yarn dlx @yarnpkg/sdks vscode 
+```
+
 # License
 MIT
