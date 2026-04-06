@@ -1,0 +1,62 @@
+name: CI
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: ./.github/actions/setup
+      - run: yarn build
+
+  snyk:
+    name: 🔒 Snyk scan
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore') }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      - name: 🔒 Snyk test
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --yarn-workspaces --strict-out-of-sync=false --severity-threshold=high
+          command: test
+
+      - name: 🔒 Snyk monitor
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --yarn-workspaces --strict-out-of-sync=false
+          command: monitor
+
+  bump:
+    name: Bump packages
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: chriswoodle/bump-please-action@v1.5.3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
